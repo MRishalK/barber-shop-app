@@ -1,4 +1,5 @@
 "use client";
+
 import {
   Ban,
   Calendar,
@@ -8,31 +9,19 @@ import {
   Plus,
   Scissors,
   Trash2,
+  User,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const INITIAL_SERVICES = [
-  { id: "cut", name: "Haircut", duration: 30, price: 150 },
-  { id: "shave", name: "Shave", duration: 20, price: 100 },
-  { id: "combo", name: "Cut + Shave", duration: 45, price: 220 },
-  { id: "beard", name: "Beard trim", duration: 15, price: 80 },
-];
 
 const INITIAL_HOURS = WEEKDAYS.reduce((acc, day) => {
   acc[day] = day === "Sun" ? { open: false, from: "09:00", to: "19:00" } : { open: true, from: "09:00", to: "19:00" };
   return acc;
 }, {});
 
-const INITIAL_BOOKINGS = [
-  { id: 1, name: "Anand Menon", phone: "98470xxxxx", service: "Haircut", date: "2026-09-06", time: "10:30", barber: "Raj" },
-  { id: 2, name: "Kiran S", phone: "94470xxxxx", service: "Cut + Shave", date: "2026-09-06", time: "11:15", barber: "Vinu" },
-  { id: 3, name: "Fahad P", phone: "96330xxxxx", service: "Beard trim", date: "2026-09-07", time: "16:00", barber: "Any" },
-];
-
-const TABS = ["Bookings", "Services", "Hours", "Block slots"];
+const TABS = ["Bookings", "Barbers", "Services", "Hours", "Block slots"];
 
 function Section({ title, children, action }) {
   return (
@@ -48,38 +37,145 @@ function Section({ title, children, action }) {
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState("Bookings");
-  const [services, setServices] = useState(INITIAL_SERVICES);
+
+  // bookings
+  const [bookings, setBookings] = useState([]);
+  const [loadingBookings, setLoadingBookings] = useState(true);
+
+  // barbers
+  const [barbers, setBarbers] = useState([]);
+  const [loadingBarbers, setLoadingBarbers] = useState(true);
+  const [editingBarberId, setEditingBarberId] = useState(null);
+  const [barberDraft, setBarberDraft] = useState({ name: "" });
+
+  // services
+  const [services, setServices] = useState([]);
+  const [loadingServices, setLoadingServices] = useState(true);
+  const [editingServiceId, setEditingServiceId] = useState(null);
+  const [serviceDraft, setServiceDraft] = useState({ name: "", duration: 30, price: 0 });
+
+  // hours (still local — not yet enforced by the booking system)
   const [hours, setHours] = useState(INITIAL_HOURS);
-  const [bookings, setBookings] = useState(INITIAL_BOOKINGS);
-  const [blocked, setBlocked] = useState([{ date: "2026-09-08", time: "13:00", note: "Lunch with supplier" }]);
-  const [editingId, setEditingId] = useState(null);
-  const [draft, setDraft] = useState({ name: "", duration: 30, price: 0 });
+
+  // blocked slots
+  const [blocked, setBlocked] = useState([]);
+  const [loadingBlocked, setLoadingBlocked] = useState(true);
   const [blockForm, setBlockForm] = useState({ date: "", time: "", note: "" });
 
-  function cancelBooking(id) {
-    setBookings((prev) => prev.filter((b) => b.id !== id));
+  useEffect(() => {
+    fetch("/api/admin/bookings")
+      .then((r) => r.json())
+      .then((res) => setBookings(res.bookings || []))
+      .finally(() => setLoadingBookings(false));
+
+    fetch("/api/admin/barbers")
+      .then((r) => r.json())
+      .then((res) => setBarbers(res.barbers || []))
+      .finally(() => setLoadingBarbers(false));
+
+    fetch("/api/admin/services")
+      .then((r) => r.json())
+      .then((res) => setServices(res.services || []))
+      .finally(() => setLoadingServices(false));
+
+    fetch("/api/blocked-slots")
+      .then((r) => r.json())
+      .then((res) => setBlocked(res.blocked || []))
+      .finally(() => setLoadingBlocked(false));
+  }, []);
+
+  async function cancelBooking(id) {
+    const res = await fetch(`/api/bookings/${id}/cancel`, { method: "POST" });
+    if (res.ok) setBookings((prev) => prev.filter((b) => b.id !== id));
   }
 
-  function startEdit(service) {
-    setEditingId(service.id);
-    setDraft({ name: service.name, duration: service.duration, price: service.price });
+  // --- barber CRUD ---
+  function startEditBarber(barber) {
+    setEditingBarberId(barber.id);
+    setBarberDraft({ name: barber.name });
   }
 
-  function saveEdit(id) {
-    setServices((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...draft, duration: Number(draft.duration), price: Number(draft.price) } : s))
-    );
-    setEditingId(null);
+  async function saveEditBarber(id) {
+    if (!barberDraft.name.trim()) return;
+    const res = await fetch(`/api/barbers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: barberDraft.name }),
+    });
+    if (res.ok) {
+      setBarbers((prev) => prev.map((b) => (b.id === id ? { ...b, name: barberDraft.name } : b)));
+      setEditingBarberId(null);
+    }
   }
 
-  function addService() {
-    const id = `svc_${Date.now()}`;
-    setServices((prev) => [...prev, { id, name: "New service", duration: 30, price: 0 }]);
-    startEdit({ id, name: "New service", duration: 30, price: 0 });
+  async function addBarber() {
+    const res = await fetch("/api/barbers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New barber" }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setBarbers((prev) => [...prev, data.barber]);
+      startEditBarber(data.barber);
+    }
   }
 
-  function removeService(id) {
-    setServices((prev) => prev.filter((s) => s.id !== id));
+  async function removeBarber(id) {
+    const res = await fetch(`/api/barbers/${id}`, { method: "DELETE" });
+    if (res.ok) setBarbers((prev) => prev.filter((b) => b.id !== id));
+  }
+
+  async function toggleBarberActive(barber) {
+    const res = await fetch(`/api/barbers/${barber.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: !barber.active }),
+    });
+    if (res.ok) {
+      setBarbers((prev) => prev.map((b) => (b.id === barber.id ? { ...b, active: !b.active } : b)));
+    }
+  }
+
+  // --- service CRUD ---
+  function startEditService(service) {
+    setEditingServiceId(service.id);
+    setServiceDraft({ name: service.name, duration: service.duration_minutes, price: service.price });
+  }
+
+  async function saveEditService(id) {
+    const payload = {
+      name: serviceDraft.name,
+      duration_minutes: Number(serviceDraft.duration),
+      price: Number(serviceDraft.price),
+    };
+    const res = await fetch(`/api/services/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      setServices((prev) => prev.map((s) => (s.id === id ? { ...s, ...payload } : s)));
+      setEditingServiceId(null);
+    }
+  }
+
+  async function addService() {
+    const res = await fetch("/api/services", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New service", duration_minutes: 30, price: 0 }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setServices((prev) => [...prev, data.service]);
+      startEditService(data.service);
+    }
+  }
+
+  async function removeService(id) {
+    const res = await fetch(`/api/services/${id}`, { method: "DELETE" });
+    if (res.ok) setServices((prev) => prev.filter((s) => s.id !== id));
   }
 
   function toggleDay(day) {
@@ -90,15 +186,25 @@ export default function AdminDashboard() {
     setHours((prev) => ({ ...prev, [day]: { ...prev[day], [field]: value } }));
   }
 
-  function addBlock(e) {
+  // --- blocked slots ---
+  async function addBlock(e) {
     e.preventDefault();
     if (!blockForm.date || !blockForm.time) return;
-    setBlocked((prev) => [...prev, blockForm]);
-    setBlockForm({ date: "", time: "", note: "" });
+    const res = await fetch("/api/blocked-slots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: blockForm.date, startTime: blockForm.time, note: blockForm.note }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setBlocked((prev) => [...prev, data.blocked]);
+      setBlockForm({ date: "", time: "", note: "" });
+    }
   }
 
-  function removeBlock(idx) {
-    setBlocked((prev) => prev.filter((_, i) => i !== idx));
+  async function removeBlock(id) {
+    const res = await fetch(`/api/blocked-slots/${id}`, { method: "DELETE" });
+    if (res.ok) setBlocked((prev) => prev.filter((b) => b.id !== id));
   }
 
   return (
@@ -135,17 +241,20 @@ export default function AdminDashboard() {
         {/* Bookings */}
         {tab === "Bookings" && (
           <Section title="Upcoming bookings">
-            {bookings.length === 0 ? (
+            {loadingBookings ? (
+              <p className="text-sm text-[#8A8375]">Loading…</p>
+            ) : bookings.length === 0 ? (
               <p className="text-sm text-[#8A8375]">No bookings scheduled.</p>
             ) : (
               <div className="divide-y divide-[#EDE7D9]">
                 {bookings.map((b) => (
                   <div key={b.id} className="flex items-center justify-between py-3">
                     <div>
-                      <p className="text-sm font-medium">{b.name}</p>
+                      <p className="text-sm font-medium">{b.customer_name}</p>
                       <p className="text-xs text-[#8A8375]">
-                        {b.service} · {b.date} · {b.time} · {b.barber}
+                        {b.services?.name} · {b.date} · {b.start_time?.slice(0, 5)} · {b.barbers?.name}
                       </p>
+                      <p className="text-xs text-[#8A8375]">{b.customer_phone}</p>
                     </div>
                     <button
                       onClick={() => cancelBooking(b.id)}
@@ -153,6 +262,76 @@ export default function AdminDashboard() {
                     >
                       Cancel
                     </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        )}
+
+        {/* Barbers */}
+        {tab === "Barbers" && (
+          <Section
+            title="Barbers"
+            action={
+              <button
+                onClick={addBarber}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-[#A33025] text-white hover:bg-[#8A2A1F] transition"
+              >
+                <Plus size={13} /> Add barber
+              </button>
+            }
+          >
+            {loadingBarbers ? (
+              <p className="text-sm text-[#8A8375]">Loading…</p>
+            ) : (
+              <div className="divide-y divide-[#EDE7D9]">
+                {barbers.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between py-3 gap-3">
+                    {editingBarberId === b.id ? (
+                      <>
+                        <input
+                          value={barberDraft.name}
+                          onChange={(e) => setBarberDraft({ name: e.target.value })}
+                          className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm flex-1"
+                          placeholder="Barber name"
+                          autoFocus
+                        />
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => saveEditBarber(b.id)} className="p-1.5 rounded-md hover:bg-[#EAF3DE] text-[#3B6D11]">
+                            <Check size={15} />
+                          </button>
+                          <button onClick={() => setEditingBarberId(null)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#8A8375]">
+                            <X size={15} />
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full bg-[#F1EFE8] flex items-center justify-center shrink-0">
+                            <User size={14} className="text-[#8A8375]" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">{b.name}</p>
+                            <button
+                              onClick={() => toggleBarberActive(b)}
+                              className={`text-xs ${b.active ? "text-[#3B6D11]" : "text-[#8A8375]"}`}
+                            >
+                              {b.active ? "Active — taking bookings" : "Inactive — hidden from customers"}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => startEditBarber(b)} className="p-1.5 rounded-md hover:bg-[#EDE7D9]">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => removeBarber(b.id)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#A33025]">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -173,72 +352,76 @@ export default function AdminDashboard() {
               </button>
             }
           >
-            <div className="divide-y divide-[#EDE7D9]">
-              {services.map((s) => (
-                <div key={s.id} className="flex items-center justify-between py-3 gap-3">
-                  {editingId === s.id ? (
-                    <>
-                      <div className="flex gap-2 flex-1 flex-wrap">
-                        <input
-                          value={draft.name}
-                          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                          className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm flex-1 min-w-[120px]"
-                          placeholder="Service name"
-                        />
-                        <input
-                          type="number"
-                          value={draft.duration}
-                          onChange={(e) => setDraft({ ...draft, duration: e.target.value })}
-                          className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm w-20"
-                          placeholder="Mins"
-                        />
-                        <input
-                          type="number"
-                          value={draft.price}
-                          onChange={(e) => setDraft({ ...draft, price: e.target.value })}
-                          className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm w-20"
-                          placeholder="₹"
-                        />
-                      </div>
-                      <div className="flex gap-1 shrink-0">
-                        <button onClick={() => saveEdit(s.id)} className="p-1.5 rounded-md hover:bg-[#EAF3DE] text-[#3B6D11]">
-                          <Check size={15} />
-                        </button>
-                        <button onClick={() => setEditingId(null)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#8A8375]">
-                          <X size={15} />
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div>
-                        <p className="text-sm font-medium">{s.name}</p>
-                        <p className="text-xs text-[#8A8375]">
-                          {s.duration} min · ₹{s.price}
-                        </p>
-                      </div>
-                      <div className="flex gap-1 shrink-0">
-                        <button onClick={() => startEdit(s)} className="p-1.5 rounded-md hover:bg-[#EDE7D9]">
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={() => removeService(s.id)}
-                          className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#A33025]"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
+            {loadingServices ? (
+              <p className="text-sm text-[#8A8375]">Loading…</p>
+            ) : (
+              <div className="divide-y divide-[#EDE7D9]">
+                {services.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between py-3 gap-3">
+                    {editingServiceId === s.id ? (
+                      <>
+                        <div className="flex gap-2 flex-1 flex-wrap">
+                          <input
+                            value={serviceDraft.name}
+                            onChange={(e) => setServiceDraft({ ...serviceDraft, name: e.target.value })}
+                            className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm flex-1 min-w-[120px]"
+                            placeholder="Service name"
+                          />
+                          <input
+                            type="number"
+                            value={serviceDraft.duration}
+                            onChange={(e) => setServiceDraft({ ...serviceDraft, duration: e.target.value })}
+                            className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm w-20"
+                            placeholder="Mins"
+                          />
+                          <input
+                            type="number"
+                            value={serviceDraft.price}
+                            onChange={(e) => setServiceDraft({ ...serviceDraft, price: e.target.value })}
+                            className="border border-[#D8D0C0] rounded-md px-2 py-1 text-sm w-20"
+                            placeholder="₹"
+                          />
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => saveEditService(s.id)} className="p-1.5 rounded-md hover:bg-[#EAF3DE] text-[#3B6D11]">
+                            <Check size={15} />
+                          </button>
+                          <button onClick={() => setEditingServiceId(null)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#8A8375]">
+                            <X size={15} />
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <p className="text-sm font-medium">{s.name}</p>
+                          <p className="text-xs text-[#8A8375]">
+                            {s.duration_minutes} min · ₹{s.price}
+                          </p>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => startEditService(s)} className="p-1.5 rounded-md hover:bg-[#EDE7D9]">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => removeService(s.id)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#A33025]">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </Section>
         )}
 
         {/* Hours */}
         {tab === "Hours" && (
           <Section title="Working hours">
+            <p className="text-xs text-[#8A8375] mb-3">
+              Not yet enforced by bookings — this is a preview of the hours UI, coming next.
+            </p>
             <div className="space-y-2">
               {WEEKDAYS.map((day) => (
                 <div key={day} className="flex items-center gap-3 py-1.5">
@@ -309,20 +492,23 @@ export default function AdminDashboard() {
                 <Ban size={14} /> Block
               </button>
             </form>
-            {blocked.length === 0 ? (
+            {loadingBlocked ? (
+              <p className="text-sm text-[#8A8375]">Loading…</p>
+            ) : blocked.length === 0 ? (
               <p className="text-sm text-[#8A8375]">No blocked slots.</p>
             ) : (
               <div className="divide-y divide-[#EDE7D9]">
-                {blocked.map((b, i) => (
-                  <div key={i} className="flex items-center justify-between py-3">
+                {blocked.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between py-3">
                     <div className="flex items-center gap-2 text-sm">
                       <Calendar size={14} className="text-[#8A8375]" />
                       {b.date}
                       <Clock size={14} className="text-[#8A8375] ml-2" />
-                      {b.time}
+                      {b.start_time?.slice(0, 5)}
+                      {b.barbers?.name && <span className="text-xs text-[#8A8375] ml-2">({b.barbers.name})</span>}
                       {b.note && <span className="text-xs text-[#8A8375] ml-2">— {b.note}</span>}
                     </div>
-                    <button onClick={() => removeBlock(i)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#A33025]">
+                    <button onClick={() => removeBlock(b.id)} className="p-1.5 rounded-md hover:bg-[#F7E7E7] text-[#A33025]">
                       <Trash2 size={14} />
                     </button>
                   </div>
